@@ -32,6 +32,10 @@ struct IslandContentView: View {
                 CollapsedPillView(monitor: monitor, artwork: artwork, island: island)
                     .transition(.opacity.animation(IslandLayout.spring))
                     .frame(width: IslandLayout.panelWidth, height: island.notchHeight, alignment: .center)
+                    // Shift the pill so the invisible `notchWidth` gap inside it lines up with
+                    // the hardware notch. The left wing (`artwork + title + 8pt margin`) grows
+                    // dynamically with the song title length; the right wing (EQ) stays fixed.
+                    .offset(x: island.dynamicCollapsedOffset)
                     .opacity(island.isVisible ? 1 : 0)
             }
         }

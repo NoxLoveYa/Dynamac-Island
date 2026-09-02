@@ -19,6 +19,16 @@ final class IslandRootView: NSView {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.syncTracking() }
             .store(in: &cancellables)
+
+        island.$dynamicCollapsedWidth
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.needsLayout = true; self?.syncTracking() }
+            .store(in: &cancellables)
+
+        island.$dynamicCollapsedOffset
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.needsLayout = true; self?.syncTracking() }
+            .store(in: &cancellables)
     }
 
     required init?(coder: NSCoder) { fatalError("unsupported") }
@@ -34,7 +44,8 @@ final class IslandRootView: NSView {
         let size = island.islandSize
         let width = size.width
         let height = size.height + inset
-        return CGRect(x: (bounds.width - width) / 2, y: bounds.height - height, width: width, height: height)
+        let xOffset: CGFloat = island.isExpanded ? 0 : island.dynamicCollapsedOffset
+        return CGRect(x: (bounds.width - width) / 2 + xOffset, y: bounds.height - height, width: width, height: height)
     }
 
     private func syncTracking() {

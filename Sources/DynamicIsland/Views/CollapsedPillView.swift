@@ -17,6 +17,10 @@ struct CollapsedPillView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(1)
+                    // The left wing grows with the title length; clamp the title so its
+                    // trailing edge stops `notchSideMargin` (8pt) before the hardware notch
+                    // (`island.notchWidth` gap). This keeps the text from sliding under the cutout.
+                    .frame(maxWidth: island.maxLeftTextWidth, alignment: .leading)
             } else if monitor.snapshot.needsPermission {
                 Text("Allow access")
                     .font(.system(size: 11, weight: .medium))
@@ -26,12 +30,40 @@ struct CollapsedPillView: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.white.opacity(0.9))
             }
-            Spacer(minLength: 8)
+            // Invisible spacer that reserves the physical notch width.
+            // The pill's total width (`dynamicCollapsedWidth = notchWidth + leftWing + rightWing`)
+            // is computed in `IslandState` using `notchWidth`, so this gap aligns exactly
+            // with the hardware cutout and the left part (artwork + title) never draws underneath it.
+            // The left wing (artwork + title) grows dynamically with the title length and its
+            // trailing edge stops `notchSideMargin` (8pt) before the notch via `maxLeftTextWidth`.
+            if monitor.snapshot.track?.hasContent == true {
+                Color.clear
+                    .frame(width: island.notchWidth, height: 1)
+            } else {
+                Spacer(minLength: 8)
+            }
             Group {
                 if monitor.snapshot.needsPermission {
                     Image(systemName: "lock.shield")
                         .font(.system(size: 10))
                         .foregroundColor(.white.opacity(0.7))
+                } else if monitor.snapshot.track?.hasContent == true {
+                    // Right wing is fixed and balances the dynamic left wing.
+                    // Its width (buttons + EQ) drives the *minimum* collapsed width;
+                    // the song title on the left drives the *maximum* width.
+                    HStack(spacing: 4) {
+                        TransportButton(icon: "backward.fill", size: 10, accent: Color(nsColor: artwork.accent)) {
+                            monitor.previousTrack()
+                        }
+                        TransportButton(icon: playing ? "pause.fill" : "play.fill", size: 11, accent: Color(nsColor: artwork.accent)) {
+                            monitor.playPause()
+                        }
+                        TransportButton(icon: "forward.fill", size: 10, accent: Color(nsColor: artwork.accent)) {
+                            monitor.nextTrack()
+                        }
+                    }
+                    EQBars(playing: playing, color: Color(nsColor: artwork.accent))
+                        .frame(width: 15, height: 13)
                 } else {
                     EQBars(playing: playing, color: Color(nsColor: artwork.accent))
                         .frame(width: 15, height: 13)
