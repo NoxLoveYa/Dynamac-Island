@@ -4,22 +4,7 @@ import AppKit
 /// Pont pour les navigateurs et autres apps web qui ne sont pas détectées via MediaRemote GetInfo
 /// (qui échoue pour les apps ad-hoc). Utilise JXA (JavaScript for Automation) via `osascript`.
 final class BrowserBridge {
-    private func log(_ msg: String) {
-        let line = "[BrowserBridge] \(Date()) \(msg)\n"
-        if let data = line.data(using: .utf8) {
-            let url = URL(fileURLWithPath: "/tmp/dynamic_island.log")
-            if FileManager.default.fileExists(atPath: "/tmp/dynamic_island.log") {
-                if let fh = try? FileHandle(forWritingTo: url) {
-                    fh.seekToEndOfFile()
-                    fh.write(data)
-                    try? fh.close()
-                }
-            } else {
-                try? data.write(to: url)
-            }
-        }
-        print(line, terminator: "")
-    }
+    private func log(_ msg: String) { }
     static let shared = BrowserBridge()
 
     struct WebTrack {
@@ -130,38 +115,54 @@ final class BrowserBridge {
         log("checking \(appName) isRunning=\(isRunning(bundleID: bundleID))")
         guard isRunning(bundleID: bundleID) else { log("\(appName) not running"); return nil }
 
-        // Script JXA optimisé : 1 seul execute par onglet, check activeTab d'abord
+        // Script JXA optimisé : gère activeTab null et cherche dans toutes les fenêtres
         let script = """
         var app = Application("\(appName)");
         if (app.windows.length === 0) { "no windows"; } else {
           var result = "";
           try {
-            var tab = app.windows[0].activeTab;
-            var info = tab.execute({javascript: "(() => { var t=document.title; var u=location.href; var v=document.querySelector('video'); var p=v?(!v.paused && !v.ended && v.currentTime>0).toString():'false'; var d=v? v.duration.toString():'0'; return t+'|||'+u+'|||'+p+'|||'+d })()"});
-            if (info && info.indexOf("|||") !== -1) {
-              var parts = info.split("|||");
-              var p = parts[2];
-              if (p === "true") { result = info; }
-              else {
-                for (var wi=0; wi<app.windows.length && result === ""; wi++) {
-                  var w = app.windows[wi];
-                  for (var ti=0; ti<w.tabs.length; ti++) {
-                    try {
-                      var t2 = w.tabs[ti];
-                      var u2 = t2.url();
-                      if (u2.indexOf("youtube.com") === -1 && u2.indexOf("youtu.be") === -1 && u2.indexOf("soundcloud.com") === -1 && u2.indexOf("netflix.com") === -1 && u2.indexOf("twitch.tv") === -1 && u2.indexOf("vimeo.com") === -1) { continue; }
-                      var info2 = t2.execute({javascript: "(() => { var t=document.title; var u=location.href; var v=document.querySelector('video'); var p=v?(!v.paused && !v.ended && v.currentTime>0).toString():'false'; var d=v? v.duration.toString():'0'; return t+'|||'+u+'|||'+p+'|||'+d })()"});
-                      if (info2 && info2.split("|||")[2] === "true") { result = info2; wi=app.windows.length; break; }
-                    } catch(e2) {}
+            var tab = null;
+            // Trouve le premier onglet actif non null, sinon le premier onglet
+            for (var wi2=0; wi2<app.windows.length; wi2++) {
+              try {
+                var w2 = app.windows[wi2];
+                var cand = w2.activeTab();
+                if (cand !== null) { tab = cand; break; }
+              } catch(e) {}
+            }
+            if (tab === null) { try { tab = app.windows[0].tabs[0]; } catch(e) {} }
+            if (tab === null) { result = "no tab"; }
+            else {
+              var info = tab.execute({javascript: "(() => { var t=document.title; var u=location.href; var v=document.querySelector('video'); var p=v?(!v.paused && !v.ended && v.currentTime>0).toString():'false'; var d=v? v.duration.toString():'0'; return t+'|||'+u+'|||'+p+'|||'+d })()"});
+              if (info && info.indexOf("|||") !== -1) {
+                var parts = info.split("|||");
+                var p = parts[2];
+                if (p === "true") { result = info; }
+                else {
+                  for (var wi=0; wi<app.windows.length && result === ""; wi++) {
+                    var w = app.windows[wi];
+                    for (var ti=0; ti<w.tabs.length; ti++) {
+                      try {
+                        var t2 = w.tabs[ti];
+                        var u2 = t2.url();
+                        if (u2.indexOf("youtube.com") === -1 && u2.indexOf("youtu.be") === -1 && u2.indexOf("soundcloud.com") === -1 && u2.indexOf("netflix.com") === -1 && u2.indexOf("twitch.tv") === -1 && u2.indexOf("vimeo.com") === -1) { continue; }
+                        var info2 = t2.execute({javascript: "(() => { var t=document.title; var u=location.href; var v=document.querySelector('video'); var p=v?(!v.paused && !v.ended && v.currentTime>0).toString():'false'; var d=v? v.duration.toString():'0'; return t+'|||'+u+'|||'+p+'|||'+d })()"});
+                        if (info2 && info2.split("|||")[2] === "true") { result = info2; wi=app.windows.length; break; }
+                      } catch(e2) {}
+                    }
                   }
+                  if (result === "") { result = info; }
                 }
-                if (result === "") { result = info; }
-              }
-            } else { result = info; }
+              } else { result = info; }
+            }
           } catch(e) {
             try {
-              var tab2 = app.windows[0].activeTab;
-              result = tab2.title() + "|||" + tab2.url() + "|||false|||0";
+              var tab2 = null;
+              for (var wi3=0; wi3<app.windows.length; wi3++) {
+                try { var w3=app.windows[wi3]; var c=w3.activeTab(); if(c!==null){tab2=c;break;} } catch(e) {}
+              }
+              if (tab2===null) { try{ tab2=app.windows[0].tabs[0]; }catch(e){} }
+              if (tab2!==null) { result = tab2.title() + "|||" + tab2.url() + "|||false|||0"; } else { result = "error"; }
             } catch(e2) { result = "error"; }
           }
           result;

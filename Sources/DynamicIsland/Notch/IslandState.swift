@@ -4,17 +4,25 @@ import SwiftUI
 
 extension NSScreen {
     var notchRect: CGRect? {
-        guard safeAreaInsets.top > 0,
-              let left = auxiliaryTopLeftArea,
+        // Ne se base pas sur safeAreaInsets qui peut être 0 pendant le slide de Spaces
+        guard let left = auxiliaryTopLeftArea,
               let right = auxiliaryTopRightArea else { return nil }
-        let height = safeAreaInsets.top
+        // La hauteur du notch est stable (~32-37), on la déduit de left.height ou safeAreaInsets si dispo
+        let height: CGFloat = safeAreaInsets.top > 0 ? safeAreaInsets.top : (left.height > 0 ? left.height : 32)
         let x = left.maxX
         let width = right.minX - left.maxX
+        guard width > 50 && width < 500 else { return nil }
         return CGRect(x: x, y: frame.maxY - height, width: width, height: height)
     }
 
     static var notchScreen: NSScreen? {
-        screens.first { $0.notchRect != nil }
+        // Cache le dernier écran à encoche connu pour survivre aux transitions de Spaces où `screens` est instable
+        struct Cache { static var last: NSScreen? }
+        if let s = screens.first(where: { $0.auxiliaryTopLeftArea != nil && $0.auxiliaryTopRightArea != nil }) {
+            Cache.last = s
+            return s
+        }
+        return Cache.last ?? screens.first
     }
 }
 
@@ -37,7 +45,8 @@ final class IslandState: ObservableObject {
     @Published var notchWidth: CGFloat = 190 {
         didSet {
             if abs(notchWidth - oldValue) > 0.5 {
-                updateCollapsedWidth(for: lastTrack)
+                // Pendant le slide de Spaces, on met à jour sans animation pour rester collé au notch hardware
+                updateCollapsedWidth(for: lastTrack, animated: false)
             }
         }
     }
@@ -108,7 +117,7 @@ final class IslandState: ObservableObject {
         return min(maxByPanel, min(min(maxByScreen, panel - 16), IslandLayout.expandedWidth))
     }
 
-    private func updateCollapsedWidth(for track: Track?) {
+    private func updateCollapsedWidth(for track: Track?, animated: Bool = true) {
         let leftFixed = collapsedLeftFixed
         let rightFixed = collapsedRightFixed
         let targetWidth: CGFloat
@@ -116,18 +125,11 @@ final class IslandState: ObservableObject {
         if let track, track.hasContent {
             let font = NSFont.systemFont(ofSize: 12, weight: .medium)
             let textWidth = (track.name as NSString).size(withAttributes: [.font: font]).width
-            // Left wing must fit artwork + text and stop `notchSideMargin` before the notch.
             let leftWing = leftFixed + textWidth + notchSideMargin
             let rightWing = rightFixed
-            // Total pill width = left wing + physical notch gap + right wing + extra.
-            // `notchWidth` keeps the title left of the hardware cutout; `pillExtraWidth`
-            // makes the pill slightly bigger (less margin to edges/waveform).
             let needed = notchWidth + leftWing + rightWing + pillExtraWidth
             let clamped = min(max(needed, IslandLayout.collapsedWidth), maxCollapsedWidth)
             targetWidth = clamped
-            // When clamped, the left wing is effectively reduced; keep the notch gap
-            // centered on the hardware notch by shifting the whole pill.
-            // `pillExtraWidth` is split symmetrically, so subtract it for effective left.
             let effectiveLeftWing = clamped - notchWidth - rightWing - pillExtraWidth
             targetOffset = (rightWing - effectiveLeftWing) / 2
         } else if track == nil {
@@ -135,13 +137,17 @@ final class IslandState: ObservableObject {
             targetOffset = 0
         } else {
             targetWidth = 320
-            // Balanced centered pill for placeholder state.
             targetOffset = 0
         }
         let needsWidth = abs(targetWidth - dynamicCollapsedWidth) > 0.5
         let needsOffset = abs(targetOffset - dynamicCollapsedOffset) > 0.5
         if needsWidth || needsOffset {
-            withAnimation(IslandLayout.spring) {
+            if animated {
+                withAnimation(IslandLayout.spring) {
+                    dynamicCollapsedWidth = targetWidth
+                    dynamicCollapsedOffset = targetOffset
+                }
+            } else {
                 dynamicCollapsedWidth = targetWidth
                 dynamicCollapsedOffset = targetOffset
             }

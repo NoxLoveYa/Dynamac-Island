@@ -34,8 +34,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.applyGeometry()
+                self?.panel?.orderFrontRegardless()
             }
         }
+        NotificationCenter.default.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.applyGeometry()
+                self?.panel?.orderFrontRegardless()
+            }
+        }
+        // Garde le panel devant à chaque changement d'écran / wake
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeScreenNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.applyGeometry()
+            }
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.applyGeometry()
+                self?.panel?.orderFrontRegardless()
+            }
+        }
+        // Suit le notch en continu pendant les transitions de Spaces (slide) pour paraître fixe derrière la découpe physique
+        // 60fps pendant le slide, sinon le panel avec `stationary` reste déjà fixe, mais on force un suivi précis
+        // Important : en mode `common` pour tourner pendant le tracking du slide (eventTracking)
+        let followTimer = Timer(timeInterval: 1.0/60.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.applyGeometryIfNeeded()
+            }
+        }
+        RunLoop.main.add(followTimer, forMode: .common)
+        // Poll léger au cas où le notch bouge sans notification (ex: changement de résolution)
+        let pollTimer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.applyGeometry()
+            }
+        }
+        RunLoop.main.add(pollTimer, forMode: .common)
     }
 
     func applyGeometry() {
@@ -56,7 +103,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             width: IslandLayout.panelWidth,
             height: panelHeight
         )
-        panel.setFrame(frame, display: true)
+        // Évite de re-set la frame si elle n'a pas bougé (perf)
+        if panel.frame != frame {
+            panel.setFrame(frame, display: true)
+        } else {
+            // Force quand même le layout interne au cas où
+            panel.setFrame(frame, display: false)
+        }
+    }
+
+    func applyGeometryIfNeeded() {
+        // Appelé à 60fps : ne fait rien si le notch n'a pas bougé
+        // Pour l'instant on appelle applyGeometry qui fait déjà le check `panel.frame != frame`
+        applyGeometry()
     }
 
     private func setupStatusItem() {

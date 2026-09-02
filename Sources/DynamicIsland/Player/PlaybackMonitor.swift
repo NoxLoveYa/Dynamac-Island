@@ -2,22 +2,7 @@ import Foundation
 import Combine
 
 final class PlaybackMonitor: ObservableObject {
-    private func log(_ msg: String) {
-        let line = "[PlaybackMonitor] \(Date()) \(msg)\n"
-        if let data = line.data(using: .utf8) {
-            let url = URL(fileURLWithPath: "/tmp/dynamic_island.log")
-            if FileManager.default.fileExists(atPath: "/tmp/dynamic_island.log") {
-                if let fh = try? FileHandle(forWritingTo: url) {
-                    fh.seekToEndOfFile()
-                    fh.write(data)
-                    try? fh.close()
-                }
-            } else {
-                try? data.write(to: url)
-            }
-        }
-        print(line, terminator: "")
-    }
+    private func log(_ msg: String) { }
     @Published private(set) var snapshot = Snapshot.empty
 
     private let mediaRemote = MediaRemoteBridge.shared
