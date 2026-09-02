@@ -7,7 +7,22 @@ import Darwin
 /// Safari / Chrome / Firefox (YouTube, SoundCloud, etc.), et tout app qui
 /// publie via MPNowPlayingInfoCenter / MediaRemote.
 final class MediaRemoteBridge {
-    private func log(_ msg: String) { }
+    private func log(_ msg: String) {
+        let line = "[MediaRemote] \(Date()) \(msg)\n"
+        if let data = line.data(using: .utf8) {
+            let url = URL(fileURLWithPath: "/tmp/dynamic_island.log")
+            if FileManager.default.fileExists(atPath: "/tmp/dynamic_island.log") {
+                if let fh = try? FileHandle(forWritingTo: url) {
+                    fh.seekToEndOfFile()
+                    fh.write(data)
+                    try? fh.close()
+                }
+            } else {
+                try? data.write(to: url)
+            }
+        }
+        print(line, terminator: "")
+    }
     static let shared = MediaRemoteBridge()
 
     private var handle: UnsafeMutableRawPointer?

@@ -4,7 +4,22 @@ import AppKit
 /// Pont pour les navigateurs et autres apps web qui ne sont pas détectées via MediaRemote GetInfo
 /// (qui échoue pour les apps ad-hoc). Utilise JXA (JavaScript for Automation) via `osascript`.
 final class BrowserBridge {
-    private func log(_ msg: String) { }
+    private func log(_ msg: String) {
+        let line = "[BrowserBridge] \(Date()) \(msg)\n"
+        if let data = line.data(using: .utf8) {
+            let url = URL(fileURLWithPath: "/tmp/dynamic_island.log")
+            if FileManager.default.fileExists(atPath: "/tmp/dynamic_island.log") {
+                if let fh = try? FileHandle(forWritingTo: url) {
+                    fh.seekToEndOfFile()
+                    fh.write(data)
+                    try? fh.close()
+                }
+            } else {
+                try? data.write(to: url)
+            }
+        }
+        print(line, terminator: "")
+    }
     static let shared = BrowserBridge()
 
     struct WebTrack {
@@ -30,15 +45,53 @@ final class BrowserBridge {
         !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
     }
 
-    // Exécute un script JXA via osascript et retourne stdout
+    private func youtubeThumbnail(from url: String) -> String? {
+        // Extrait l'ID YouTube de l'URL et retourne la miniature maxres
+        guard let range = url.range(of: "v=") else {
+            // Gère youtu.be/ID
+            if let range2 = url.range(of: "youtu.be/") {
+                let start = range2.upperBound
+                let end = url[start...].firstIndex(where: { $0 == "&" || $0 == "?" || $0 == "/" }) ?? url.endIndex
+                let id = String(url[start..<end])
+                if !id.isEmpty { return "https://img.youtube.com/vi/\(id)/maxresdefault.jpg" }
+            }
+            return nil
+        }
+        let start = range.upperBound
+        let end = url[start...].firstIndex(where: { $0 == "&" || $0 == "?" || $0 == "#" }) ?? url.endIndex
+        let id = String(url[start..<end])
+        if id.isEmpty { return nil }
+        return "https://img.youtube.com/vi/\(id)/maxresdefault.jpg"
+    }
+
+    private func artworkFrom(url: String, title: String) -> String {
+        if let thumb = youtubeThumbnail(from: url) { return thumb }
+        // Pour les autres sites, on essaiera de récupérer og:image via JS (déjà dans le JXA)
+        return ""
+    }
+
+    // Exécute un script JXA via osascript et retourne stdout (via fichier temp)
     private func runJXA(_ script: String, timeout: TimeInterval = 1.5) -> String? {
         log("runJXA start script length \(script.count)")
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileName = "jxa_\(UUID().uuidString).js"
+        let fileURL = tempDir.appendingPathComponent(fileName)
+        do {
+            try script.write(to: fileURL, atomically: true, encoding: .utf8)
+            log("wrote temp file \(fileURL.path) exists=\(FileManager.default.fileExists(atPath: fileURL.path))")
+        } catch {
+            log("failed to write temp file \(error)")
+            return nil
+        }
+        defer { try? FileManager.default.removeItem(at: fileURL) }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-l", "JavaScript", "-e", script]
+        process.arguments = ["-l", "JavaScript", fileURL.path]
+        log("process arguments \(process.arguments ?? [])")
         let pipe = Pipe()
+        let errPipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
+        process.standardError = errPipe
         do {
             try process.run()
             log("process run success")
@@ -46,17 +99,26 @@ final class BrowserBridge {
             log("process run failed \(error)")
             return nil
         }
-        // Timeout
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning && Date() < deadline {
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        // Attente bloquante avec timeout (fonctionne sur background queue)
+        let group = DispatchGroup()
+        group.enter()
+        DispatchQueue.global().async {
+            process.waitUntilExit()
+            group.leave()
         }
-        if process.isRunning {
+        let waitResult = group.wait(timeout: .now() + timeout)
+        if waitResult == .timedOut {
             log("process timeout terminate")
             process.terminate()
+            // Donne un peu de temps pour terminer
+            usleep(100_000)
             return nil
         }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        if let errStr = String(data: errData, encoding: .utf8), !errStr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            log("stderr: \(errStr)")
+        }
         guard let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
               !output.isEmpty else { log("output empty"); return nil }
         log("runJXA output success length \(output.count)")
@@ -79,16 +141,13 @@ final class BrowserBridge {
             if (info && info.indexOf("|||") !== -1) {
               var parts = info.split("|||");
               var p = parts[2];
-              // Si l'onglet actif joue, on le retourne directement (priorité)
               if (p === "true") { result = info; }
               else {
-                // Sinon, cherche dans tous les onglets une vidéo en lecture
                 for (var wi=0; wi<app.windows.length && result === ""; wi++) {
                   var w = app.windows[wi];
                   for (var ti=0; ti<w.tabs.length; ti++) {
                     try {
                       var t2 = w.tabs[ti];
-                      // Filtre rapide par URL sans JS
                       var u2 = t2.url();
                       if (u2.indexOf("youtube.com") === -1 && u2.indexOf("youtu.be") === -1 && u2.indexOf("soundcloud.com") === -1 && u2.indexOf("netflix.com") === -1 && u2.indexOf("twitch.tv") === -1 && u2.indexOf("vimeo.com") === -1) { continue; }
                       var info2 = t2.execute({javascript: "(() => { var t=document.title; var u=location.href; var v=document.querySelector('video'); var p=v?(!v.paused && !v.ended && v.currentTime>0).toString():'false'; var d=v? v.duration.toString():'0'; return t+'|||'+u+'|||'+p+'|||'+d })()"});
@@ -118,7 +177,9 @@ final class BrowserBridge {
         var url = parts.count > 1 ? parts[1].trimmingCharacters(in: CharacterSet(charactersIn: "\"'")).trimmingCharacters(in: .whitespacesAndNewlines) : ""
         var isPlayingStr = parts.count > 2 ? parts[2].trimmingCharacters(in: CharacterSet(charactersIn: "\"'")).trimmingCharacters(in: .whitespacesAndNewlines) : "false"
         var durationStr = parts.count > 3 ? parts[3].trimmingCharacters(in: CharacterSet(charactersIn: "\"'")).trimmingCharacters(in: .whitespacesAndNewlines) : "0"
-        log("parsed title=\(title) url=\(url) isPlayingStr=\(isPlayingStr) duration=\(durationStr)")
+        var artwork = parts.count > 4 ? parts[4].trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) : ""
+        if artwork.isEmpty { artwork = artworkFrom(url: url, title: title) }
+        log("parsed title=\(title) url=\(url) isPlayingStr=\(isPlayingStr) duration=\(durationStr) artwork=\(artwork)")
 
         // Filtre : si le titre est vide ou juste "YouTube" sans vidéo, on ignore sauf si c'est la seule option
         // On considère que c'est du média si URL contient des domaines connus ou si une vidéo existe
@@ -147,17 +208,16 @@ final class BrowserBridge {
 
         let isPlaying = isPlayingStr.lowercased() == "true"
         let duration = Double(durationStr) ?? 0
-        // Pour l'instant position 0, on ne track pas le currentTime
         let trackId = "\(bundleID):\(url):\(title)"
         var snap = Snapshot()
         snap.running = true
         snap.state = isPlaying ? .playing : .paused
         snap.position = 0
-        snap.track = Track(id: trackId, name: title.isEmpty ? url : title, artist: bundleID == "company.thebrowser.Browser" ? "Arc" : appName, album: url, duration: duration, artworkUrl: "")
+        snap.track = Track(id: trackId, name: title.isEmpty ? url : title, artist: bundleID == "company.thebrowser.Browser" ? "Arc" : appName, album: url, duration: duration, artworkUrl: artwork)
         snap.bundleIdentifier = bundleID
         snap.displayName = appName
         snap.updatedAt = Date()
-        log("created Chromium snap title=\(title) isPlaying=\(isPlaying) hasContent=\(snap.track?.hasContent ?? false)")
+        log("created Chromium snap title=\(title) isPlaying=\(isPlaying) artwork=\(artwork) hasContent=\(snap.track?.hasContent ?? false)")
         return snap
     }
 
@@ -190,7 +250,9 @@ final class BrowserBridge {
         var url = parts.count > 1 ? parts[1].trimmingCharacters(in: CharacterSet(charactersIn: "\"'")).trimmingCharacters(in: .whitespacesAndNewlines) : ""
         var isPlayingStr = parts.count > 2 ? parts[2].trimmingCharacters(in: CharacterSet(charactersIn: "\"'")).trimmingCharacters(in: .whitespacesAndNewlines) : "false"
         var durationStr = parts.count > 3 ? parts[3].trimmingCharacters(in: CharacterSet(charactersIn: "\"'")).trimmingCharacters(in: .whitespacesAndNewlines) : "0"
-        log("Safari parsed title=\(title) url=\(url) isPlaying=\(isPlayingStr)")
+        var artwork = parts.count > 4 ? parts[4].trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) : ""
+        if artwork.isEmpty { artwork = artworkFrom(url: url, title: title) }
+        log("Safari parsed title=\(title) url=\(url) isPlaying=\(isPlayingStr) artwork=\(artwork)")
         if title.isEmpty && url.isEmpty { log("Safari empty"); return nil }
         // Même filtre que Chromium
         let lowerURL = url.lowercased()
@@ -205,11 +267,11 @@ final class BrowserBridge {
         var snap = Snapshot()
         snap.running = true
         snap.state = isPlaying ? .playing : .paused
-        snap.track = Track(id: "\(bundleID):\(url):\(title)", name: title.isEmpty ? url : title, artist: "Safari", album: url, duration: duration, artworkUrl: "")
+        snap.track = Track(id: "\(bundleID):\(url):\(title)", name: title.isEmpty ? url : title, artist: "Safari", album: url, duration: duration, artworkUrl: artwork)
         snap.bundleIdentifier = bundleID
         snap.displayName = "Safari"
         snap.updatedAt = Date()
-        log("created Safari snap title=\(title) isPlaying=\(isPlaying)")
+        log("created Safari snap title=\(title) isPlaying=\(isPlaying) artwork=\(artwork)")
         return snap
     }
 
@@ -299,7 +361,7 @@ final class BrowserBridge {
             if (app.windows.length > 0) {
               try {
                 var tab = app.windows[0].activeTab;
-                tab.execute({javascript: "(() => { var b=document.querySelector('.ytp-next-button'); if(b){ b.click(); return 'clicked'; } var n=document.querySelector('[data-testid=\\\"next-button\\\"]'); if(n){ n.click(); return 'clicked'; } return 'no button'; })()"});
+                tab.execute({javascript: "(() => { var b=document.querySelector('.ytp-next-button'); if(b){ b.click(); return 'clicked'; } var n=document.querySelector('[data-testid=\\"next-button\\"]'); if(n){ n.click(); return 'clicked'; } return 'no button'; })()"});
                 "done";
               } catch(e) { "error"; }
             }
