@@ -159,7 +159,9 @@ final class IslandState: ObservableObject {
             .sink { [weak self] snap in
                 self?.lastTrack = snap.track
                 self?.updateCollapsedWidth(for: snap.track)
-                let visible = true
+                // L'île disparaît en douceur quand aucun média n'est détecté
+                let hasMedia = snap.track?.hasContent == true
+                let visible = hasMedia || snap.needsPermission
                 guard let self, visible != self.isVisible else { return }
                 withAnimation(IslandLayout.fastEase) {
                     self.isVisible = visible
