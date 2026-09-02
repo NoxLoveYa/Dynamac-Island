@@ -19,7 +19,7 @@ extension NSScreen {
 }
 
 enum IslandLayout {
-    static let panelWidth: CGFloat = 1000
+    static let panelWidth: CGFloat = 640
     static let expandedWidth: CGFloat = 460
     static let collapsedWidth: CGFloat = 300
     static let expandedContentHeight: CGFloat = 108
@@ -50,59 +50,66 @@ final class IslandState: ObservableObject {
     private var lastTrack: Track?
 
     /// Slight margin between the song title's trailing edge and the left edge of the physical notch.
-    private let notchSideMargin: CGFloat = 8
+    private let notchSideMargin: CGFloat = 4
+    /// Extra width kept minimal so pill/waveform hug the edge.
+    private let pillExtraWidth: CGFloat = 4
 
-    // Right wing is fixed: [8 notch gap] + 3 transport buttons + EQ + paddings.
-    // Buttons are 28pt circles (TransportButton) with 4pt inter-spacing.
-    // Outer HStack spacing is 8, so gap→buttons =8 and buttons→EQ =8.
+    // Right wing is fixed: hug edge — [4 notch gap] + 3 transport buttons + EQ + paddings.
+    // Buttons are 28pt circles (TransportButton) with 3pt inter-spacing.
+    // OuterHStack spacing is 4, so gap→buttons =4 and buttons→EQ =4.
     // This fixed right side drives the *minimum* collapsed width; the song title on the
     // left drives the *maximum* width via `notchWidth`.
     private var collapsedRightFixed: CGFloat {
-        let rightPadding: CGFloat = 16
-        let spacingToNotch: CGFloat = 8 // outer HStack 8 between gap and buttonsHStack
+        let rightPadding: CGFloat = 8
+        let spacingToNotch: CGFloat = 4 // outerHStack 4 between gap and buttonsHStack
         let buttonWidth: CGFloat = 28
-        let interButtonSpacing: CGFloat = 4
-        let spacingButtonsToEQ: CGFloat = 8 // outerHStack 8 between buttonsHStack and EQ
+        let interButtonSpacing: CGFloat = 3
+        let spacingButtonsToEQ: CGFloat = 4 // outerHStack 4 between buttonsHStack and EQ
         let eqWidth: CGFloat = 15
         let buttonCount: CGFloat = 3
         return rightPadding + spacingToNotch + buttonCount * buttonWidth + (buttonCount - 1) * interButtonSpacing + spacingButtonsToEQ + eqWidth
     }
 
+    private var collapsedLeftFixed: CGFloat {
+        8 + 19 + 4 // left padding + artwork + spacing (HStack 4) — hug edge
+    }
+
+    // Compact pill is intentionally taller than the raw notch so it can hug
+    // the top edge and still feel vertically centered with the text. Takes 6pt
+    // more vertical space (3pt top / 3pt bottom) than the hardware cutout.
+    var compactHeight: CGFloat { notchHeight + 6 }
+    var compactYOffset: CGFloat { -2 } // nudge up to optically center text vs pill
+
     var islandSize: CGSize {
-        isExpanded
-            ? CGSize(width: IslandLayout.expandedWidth, height: notchHeight + IslandLayout.expandedContentHeight)
-            : CGSize(width: dynamicCollapsedWidth, height: notchHeight)
+        // Expanded view removed — only compact pill remains
+        CGSize(width: dynamicCollapsedWidth, height: compactHeight)
     }
 
     /// Maximum width that the title `Text` is allowed to occupy on the left wing
     /// so its trailing edge stops `notchSideMargin` before the notch's left edge.
     var maxLeftTextWidth: CGFloat {
-        let leftFixed: CGFloat = 16 + 19 + 8 // left padding + artwork + spacing
+        let leftFixed = collapsedLeftFixed
         let rightFixed = collapsedRightFixed
-        return max(0, dynamicCollapsedWidth - notchWidth - leftFixed - rightFixed - notchSideMargin)
+        // pillExtraWidth is distributed as extra outside the content, so subtract it
+        return max(0, dynamicCollapsedWidth - notchWidth - leftFixed - rightFixed - notchSideMargin - pillExtraWidth)
     }
 
     private var maxCollapsedWidth: CGFloat {
         let panel = IslandLayout.panelWidth
         let panelHalf = panel / 2
-        // Pill is hosted in a panel centered on the notch. With an asymmetric pill
-        // (left wing grows with the title, right wing fixed) the left edge is
-        // `center - leftWing - notchWidth/2`. It must stay inside the panel
-        // (`panelHalf` to each side) plus a small margin, otherwise the pill is clipped
-        // and the title appears hidden behind the hardware notch.
         let maxLeftWing = max(0, panelHalf - notchWidth / 2 - 12)
         let rightFixed = collapsedRightFixed
-        let maxByPanel = maxLeftWing + notchWidth + rightFixed
-        // Also respect the menu-bar right-icons area on the screen itself.
+        let maxByPanel = maxLeftWing + notchWidth + rightFixed + pillExtraWidth
         let screenWidth = NSScreen.notchScreen?.frame.width ?? NSScreen.main?.frame.width ?? 1512
         let rightIconsReserve: CGFloat = 180
         let rightEdge = screenWidth - rightIconsReserve
-        let maxByScreen = (rightEdge - 12) - 12 // from 12 to rightEdge
-        return min(maxByPanel, min(maxByScreen, panel - 16))
+        let maxByScreen = (rightEdge - 12) - 12
+        // Compact pill should never be way wider than expanded — cap to expandedWidth
+        return min(maxByPanel, min(min(maxByScreen, panel - 16), IslandLayout.expandedWidth))
     }
 
     private func updateCollapsedWidth(for track: Track?) {
-        let leftFixed: CGFloat = 16 + 19 + 8 // left padding + artwork + inter spacing
+        let leftFixed = collapsedLeftFixed
         let rightFixed = collapsedRightFixed
         let targetWidth: CGFloat
         let targetOffset: CGFloat
@@ -112,14 +119,16 @@ final class IslandState: ObservableObject {
             // Left wing must fit artwork + text and stop `notchSideMargin` before the notch.
             let leftWing = leftFixed + textWidth + notchSideMargin
             let rightWing = rightFixed
-            // Total pill width = left wing + physical notch gap + right wing.
-            // This uses `notchWidth` so the song title never renders under the hardware cutout.
-            let needed = notchWidth + leftWing + rightWing
+            // Total pill width = left wing + physical notch gap + right wing + extra.
+            // `notchWidth` keeps the title left of the hardware cutout; `pillExtraWidth`
+            // makes the pill slightly bigger (less margin to edges/waveform).
+            let needed = notchWidth + leftWing + rightWing + pillExtraWidth
             let clamped = min(max(needed, IslandLayout.collapsedWidth), maxCollapsedWidth)
             targetWidth = clamped
             // When clamped, the left wing is effectively reduced; keep the notch gap
             // centered on the hardware notch by shifting the whole pill.
-            let effectiveLeftWing = clamped - notchWidth - rightWing
+            // `pillExtraWidth` is split symmetrically, so subtract it for effective left.
+            let effectiveLeftWing = clamped - notchWidth - rightWing - pillExtraWidth
             targetOffset = (rightWing - effectiveLeftWing) / 2
         } else if track == nil {
             targetWidth = IslandLayout.collapsedWidth
@@ -140,7 +149,8 @@ final class IslandState: ObservableObject {
     }
 
     var panelHeight: CGFloat {
-        notchHeight + IslandLayout.expandedContentHeight + 8
+        // No expanded view — panel only needs compact height
+        compactHeight
     }
 
     func bind(monitor: PlaybackMonitor) {
@@ -158,18 +168,12 @@ final class IslandState: ObservableObject {
     }
 
     func hoverBegan() {
+        // Expanded view removed — no-op, keep compact only
         cancelCollapse()
-        guard !isExpanded else { return }
-        withAnimation(IslandLayout.spring) { isExpanded = true }
     }
 
     func hoverEnded() {
         cancelCollapse()
-        let work = DispatchWorkItem { [weak self] in
-            withAnimation(IslandLayout.spring) { self?.isExpanded = false }
-        }
-        collapseWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.32, execute: work)
     }
 
     private func cancelCollapse() {

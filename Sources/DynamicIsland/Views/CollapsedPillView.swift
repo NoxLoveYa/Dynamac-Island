@@ -8,7 +8,7 @@ struct CollapsedPillView: View {
     private var playing: Bool { monitor.snapshot.isPlaying }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 4) {
             artworkThumbnail
             if let track = monitor.snapshot.track, track.hasContent {
                 Text(track.name)
@@ -18,8 +18,8 @@ struct CollapsedPillView: View {
                     .truncationMode(.tail)
                     .layoutPriority(1)
                     // The left wing grows with the title length; clamp the title so its
-                    // trailing edge stops `notchSideMargin` (8pt) before the hardware notch
-                    // (`island.notchWidth` gap). This keeps the text from sliding under the cutout.
+                    // trailing edge stops 4pt before the hardware notch
+                    // (`island.notchWidth` gap) — hug edge.
                     .frame(maxWidth: island.maxLeftTextWidth, alignment: .leading)
             } else if monitor.snapshot.needsPermission {
                 Text("Allow access")
@@ -30,17 +30,12 @@ struct CollapsedPillView: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.white.opacity(0.9))
             }
-            // Invisible spacer that reserves the physical notch width.
-            // The pill's total width (`dynamicCollapsedWidth = notchWidth + leftWing + rightWing`)
-            // is computed in `IslandState` using `notchWidth`, so this gap aligns exactly
-            // with the hardware cutout and the left part (artwork + title) never draws underneath it.
-            // The left wing (artwork + title) grows dynamically with the title length and its
-            // trailing edge stops `notchSideMargin` (8pt) before the notch via `maxLeftTextWidth`.
+            // Invisible spacer that reserves the physical notch width — hug edge.
             if monitor.snapshot.track?.hasContent == true {
                 Color.clear
                     .frame(width: island.notchWidth, height: 1)
             } else {
-                Spacer(minLength: 8)
+                Spacer(minLength: 4)
             }
             Group {
                 if monitor.snapshot.needsPermission {
@@ -51,7 +46,7 @@ struct CollapsedPillView: View {
                     // Right wing is fixed and balances the dynamic left wing.
                     // Its width (buttons + EQ) drives the *minimum* collapsed width;
                     // the song title on the left drives the *maximum* width.
-                    HStack(spacing: 4) {
+                    HStack(spacing: 3) {
                         TransportButton(icon: "backward.fill", size: 10, accent: Color(nsColor: artwork.accent)) {
                             monitor.previousTrack()
                         }
@@ -70,8 +65,9 @@ struct CollapsedPillView: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .frame(width: island.dynamicCollapsedWidth, height: island.notchHeight)
+        .padding(.horizontal, 8)
+        .offset(y: -1) // optically center text vertically in taller pill
+        .frame(width: island.dynamicCollapsedWidth, height: island.compactHeight)
         .background(
             Color.black,
             in: UnevenRoundedRectangle(

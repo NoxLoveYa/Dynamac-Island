@@ -54,8 +54,9 @@ final class IslandRootView: NSView {
             trackingArea = nil
         }
         guard let island, island.isVisible else { return }
+        let r = islandRect(inset: 0)
         let area = NSTrackingArea(
-            rect: islandRect(inset: 6),
+            rect: r,
             options: [.mouseEnteredAndExited, .activeAlways],
             owner: self,
             userInfo: nil
