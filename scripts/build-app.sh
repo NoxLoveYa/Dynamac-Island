@@ -38,7 +38,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSUIElement</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Dynamic Island reads and controls your Spotify playback.</string>
+    <string>Dynamic Island reads and controls your media playback (Spotify, Music, browsers, etc.).</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>

@@ -1,85 +1,58 @@
 import Foundation
 import AppKit
 
-enum PlayerState: Equatable {
-    case stopped
-    case playing
-    case paused
-
-    init(string: String) {
-        switch string.lowercased() {
-        case "playing": self = .playing
-        case "paused": self = .paused
-        default: self = .stopped
-        }
-    }
-}
-
-struct Track: Equatable {
-    var id: String
-    var name: String
-    var artist: String
-    var album: String
-    var duration: Double
-    var artworkUrl: String
-
-    var hasContent: Bool { !id.isEmpty && !name.isEmpty }
-}
-
-struct Snapshot: Equatable {
-    var running = false
-    var state: PlayerState = .stopped
-    var position: Double = 0
-    var volume: Int = 0
-    var shuffle = false
-    var repeating = false
-    var track: Track?
-    var updatedAt = Date.distantPast
-    var needsPermission = false
-    // Universal media fields
-    var bundleIdentifier: String?
-    var displayName: String?
-    var artworkData: Data?
-
-    var isPlaying: Bool { state == .playing }
-
-    static let empty = Snapshot()
-
-    static func == (lhs: Snapshot, rhs: Snapshot) -> Bool {
-        lhs.running == rhs.running
-            && lhs.state == rhs.state
-            && lhs.position == rhs.position
-            && lhs.volume == rhs.volume
-            && lhs.shuffle == rhs.shuffle
-            && lhs.repeating == rhs.repeating
-            && lhs.track == rhs.track
-            && lhs.needsPermission == rhs.needsPermission
-            && lhs.bundleIdentifier == rhs.bundleIdentifier
-            && lhs.displayName == rhs.displayName
-            && lhs.artworkData == rhs.artworkData
-    }
-}
-
-final class SpotifyBridge {
+/// Bridge AppleScript générique pour les apps qui exposent un dictionnaire
+/// `player state` / `current track` via AppleScript.
+/// Utilisé en fallback quand MediaRemote n'est pas disponible ou ne répond pas.
+final class AppleScriptBridge {
+    let appName: String
+    let bundleIdentifier: String
     private let sep: Character = "\u{1F}"
+
+    init(appName: String, bundleIdentifier: String) {
+        self.appName = appName
+        self.bundleIdentifier = bundleIdentifier
+    }
+
     private lazy var pollScript: NSAppleScript? = {
+        // `artwork url` n'existe pas dans Music.app — on le rend optionnel
         let src = """
         with timeout of 2 seconds
-            tell application "Spotify"
+            tell application "\(appName)"
                 set ps to player state as string
                 set pp to player position
-                set sv to sound volume
-                set sh to shuffling
-                set rp to repeating
+                try
+                    set sv to sound volume
+                on error
+                    set sv to 50
+                end try
+                try
+                    set sh to shuffling
+                on error
+                    set sh to false
+                end try
+                try
+                    set rp to repeating
+                on error
+                    set rp to false
+                end try
                 set sep to character id 31
                 try
                     set t to current track
                     set tid to id of t
                     set tn to name of t
                     set ta to artist of t
-                    set tal to album of t
+                    try
+                        set tal to album of t
+                    on error
+                        set tal to ""
+                    end try
                     set td to duration of t
-                    set tu to artwork url of t
+                    try
+                        set tu to artwork url of t
+                    on error
+                        set tu to ""
+                    end try
                 on error
                     set tid to ""
                     set tn to ""
@@ -95,14 +68,16 @@ final class SpotifyBridge {
         return NSAppleScript(source: src)
     }()
 
-    private func isRunning() -> Bool {
-        !NSRunningApplication.runningApplications(withBundleIdentifier: "com.spotify.client").isEmpty
+    func isRunning() -> Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).isEmpty
     }
 
     func snapshot() -> Snapshot {
         guard isRunning() else { return .empty }
         var result = Snapshot()
         result.running = true
+        result.bundleIdentifier = bundleIdentifier
+        result.displayName = appName
         var descriptor: NSAppleEventDescriptor?
         var error: NSDictionary?
         if Thread.isMainThread {
@@ -161,7 +136,7 @@ final class SpotifyBridge {
 
     private func runCommand(_ cmd: String) {
         guard isRunning() else { return }
-        let src = "with timeout of 2 seconds\n tell application \"Spotify\" to \(cmd)\n end timeout"
+        let src = "with timeout of 2 seconds\n tell application \"\(appName)\" to \(cmd)\n end timeout"
         DispatchQueue.main.async {
             if let script = NSAppleScript(source: src) {
                 var err: NSDictionary?

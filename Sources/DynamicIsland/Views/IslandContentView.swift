@@ -15,11 +15,11 @@ struct IslandContentView: View {
         }
         .frame(width: IslandLayout.panelWidth, height: island.panelHeight, alignment: .top)
         .animation(IslandLayout.fastEase, value: island.isVisible)
-        .onChange(of: monitor.snapshot.track) { _, newTrack in
-            artwork.sync(track: newTrack)
+        .onChange(of: monitor.snapshot) { _, newSnap in
+            artwork.sync(snapshot: newSnap)
         }
         .onAppear {
-            artwork.sync(track: monitor.snapshot.track)
+            artwork.sync(snapshot: monitor.snapshot)
         }
     }
 }

@@ -135,12 +135,17 @@ struct ExpandedPlayerView: View {
             Image(systemName: "lock.shield")
                 .font(.system(size: 20))
                 .foregroundColor(.white.opacity(0.7))
-            Text("Allow Spotify access")
+            Text("Allow media access")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(.white)
             Text("System Settings → Privacy & Security → Automation")
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.5))
+            if let app = monitor.snapshot.displayName ?? monitor.snapshot.bundleIdentifier {
+                Text("Enable for \(app)")
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.4))
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 22)

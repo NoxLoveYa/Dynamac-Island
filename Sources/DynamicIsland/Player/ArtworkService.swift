@@ -8,7 +8,16 @@ final class ArtworkStore: ObservableObject {
     private var currentKey: String?
     private let cache = NSCache<NSString, NSImage>()
 
+    /// Compatibilité: anciens appels avec seulement track
     func sync(track: Track?) {
+        sync(track: track, artworkData: nil)
+    }
+
+    func sync(snapshot: Snapshot) {
+        sync(track: snapshot.track, artworkData: snapshot.artworkData)
+    }
+
+    func sync(track: Track?, artworkData: Data?) {
         guard let track, track.hasContent else {
             if currentKey != nil {
                 currentKey = nil
@@ -17,9 +26,29 @@ final class ArtworkStore: ObservableObject {
             }
             return
         }
-        guard track.id != currentKey else { return }
+        guard track.id != currentKey else {
+            // Si on avait pas d'artwork et qu'on reçoit maintenant artworkData, on recharge
+            if image == nil, let data = artworkData, !data.isEmpty, let img = NSImage(data: data) {
+                image = img
+                if let avg = img.averageColor {
+                    accent = avg.boostedForAccent()
+                }
+            }
+            return
+        }
         currentKey = track.id
         image = nil
+
+        // Cas universel : l'artwork est déjà fourni en Data (MediaRemote)
+        if let data = artworkData, !data.isEmpty, let img = NSImage(data: data) {
+            image = img
+            if let avg = img.averageColor {
+                accent = avg.boostedForAccent()
+            }
+            // Cache aussi sur disque pour les prochains lancements
+            Task { await ArtworkService.cache(data: data, trackId: track.id) }
+            return
+        }
 
         let key = track.id
         let url = track.artworkUrl
@@ -51,6 +80,15 @@ enum ArtworkService {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try? data.write(to: fileURL)
         return img
+    }
+
+    static func cache(data: Data, trackId: String) async {
+        guard let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("DynamicIsland/artwork", isDirectory: true) else { return }
+        let fileName = trackId.replacingOccurrences(of: ":", with: "_") + ".img"
+        let fileURL = dir.appendingPathComponent(fileName)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? data.write(to: fileURL)
     }
 }
 
